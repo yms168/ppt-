@@ -23,6 +23,9 @@ import {
   ArrowLeft, 
   Play, 
   Maximize2, 
+  Minimize2,
+  Settings,
+  Key,
   X, 
   Check, 
   Edit3, 
@@ -56,6 +59,65 @@ export default function App() {
   const [generationStep, setGenerationStep] = useState<number>(0);
   const [pptData, setPptData] = useState<PPTData>(PRESETS.tech); // Default to Apple tech preset
   
+  // Custom API configuration State
+  const [apiConfig, setApiConfig] = useState({
+    enabled: false,
+    provider: 'anthropic', // anthropic (Claude), openai, gemini
+    apiKey: '',
+    baseUrl: '',
+    model: '',
+  });
+
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  // Load configuration from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem('ppt_api_config');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setApiConfig(prev => ({ ...prev, ...parsed }));
+      } catch (e) {
+        console.error("Local storage API load error:", e);
+      }
+    }
+  }, []);
+
+  const saveApiConfig = (newConfig: typeof apiConfig) => {
+    setApiConfig(newConfig);
+    localStorage.setItem('ppt_api_config', JSON.stringify(newConfig));
+  };
+
+  // Monitor fullscreen change events
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const toggleBrowserFullscreen = () => {
+    if (!document.fullscreenElement) {
+      const element = document.documentElement;
+      if (element.requestFullscreen) {
+        element.requestFullscreen().catch(err => console.error("Fullscreen error:", err));
+      } else if ((element as any).webkitRequestFullscreen) {
+        (element as any).webkitRequestFullscreen();
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(err => console.error("Exit fullscreen error:", err));
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+      }
+    }
+  };
+
   // UI States
   const [activeSlideIndex, setActiveSlideIndex] = useState<number>(0);
   const [isPreviewing, setIsPreviewing] = useState<boolean>(false); // Slide show mode
@@ -163,7 +225,8 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           text: inputText,
-          styleOverride: styleOverride 
+          styleOverride: styleOverride,
+          apiConfig: apiConfig
         })
       });
 
@@ -313,6 +376,158 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* API Keys and Custom Route Config Panel */}
+          <div className="bg-slate-950/70 border border-slate-800/80 p-5 rounded-xl shadow-2xl space-y-4 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl"></div>
+            
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Settings className="w-4 h-4 text-indigo-400 animate-pulse" />
+                <h3 className="font-bold text-slate-200 text-xs">大模型 API 智能渠道配制</h3>
+              </div>
+              <span className="text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full font-mono">
+                Real integration
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              在此配置您的专属大模型 Key（例如 <b>Claude</b>, <b>OpenAI</b> 或 <b>Gemini</b>），即可开启真实的 AI 一键解析生成功能。数据保存在您本地，安全保密。
+            </p>
+
+            {/* Enable Custom Key Checkbox Toggle */}
+            <div className="flex items-center justify-between p-2.5 bg-slate-900 rounded-lg border border-slate-800">
+              <div className="space-y-0.5">
+                <span className="text-[11px] font-semibold text-slate-200 block">启用自定义大语言模型通道</span>
+                <span className="text-[10px] text-slate-500 block">开启后将直接调用您自備的 API Key</span>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={apiConfig.enabled}
+                  onChange={(e) => saveApiConfig({ ...apiConfig, enabled: e.target.checked })}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600 peer-checked:after:bg-white flex items-center shrink-0"></div>
+              </label>
+            </div>
+
+            {/* Custom Settings fields (Only visible when custom API is enabled) */}
+            {apiConfig.enabled && (
+              <div className="space-y-3 pt-1 text-xs animate-fade-in text-slate-300">
+                {/* Providers choice button array */}
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-1.5 font-mono">1. 选择模型提供商 (Provider):</label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => saveApiConfig({ 
+                        ...apiConfig, 
+                        provider: 'anthropic',
+                        model: 'claude-3-5-sonnet-20241022',
+                        baseUrl: 'https://api.anthropic.com/v1'
+                      })}
+                      className={`py-1.5 px-0.5 rounded text-center text-[10px] font-semibold transition-all ${
+                        apiConfig.provider === 'anthropic'
+                          ? 'border border-orange-500 bg-orange-950/25 text-orange-400 shadow'
+                          : 'border border-slate-800 bg-slate-900/50 text-slate-400 hover:text-slate-300'
+                      }`}
+                    >
+                      Anthropic Claude
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => saveApiConfig({ 
+                        ...apiConfig, 
+                        provider: 'openai',
+                        model: 'gpt-4o-mini',
+                        baseUrl: 'https://api.openai.com/v1'
+                      })}
+                      className={`py-1.5 px-0.5 rounded text-center text-[10px] font-semibold transition-all ${
+                        apiConfig.provider === 'openai'
+                          ? 'border border-indigo-500 bg-indigo-950/25 text-indigo-400 shadow'
+                          : 'border border-slate-800 bg-slate-900/50 text-slate-400 hover:text-slate-300'
+                      }`}
+                    >
+                      OpenAI 兼容
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => saveApiConfig({ 
+                        ...apiConfig, 
+                        provider: 'gemini',
+                        model: 'gemini-1.5-flash',
+                        baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models'
+                      })}
+                      className={`py-1.5 px-0.5 rounded text-center text-[10px] font-semibold transition-all ${
+                        apiConfig.provider === 'gemini'
+                          ? 'border border-cyan-500 bg-cyan-950/25 text-cyan-400 shadow'
+                          : 'border border-slate-800 bg-slate-900/50 text-slate-400 hover:text-slate-300'
+                      }`}
+                    >
+                      Gemini
+                    </button>
+                  </div>
+                </div>
+
+                {/* API Key input */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] text-slate-400 font-mono">2. 输入 API 密钥 (API Key):</label>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="password"
+                      value={apiConfig.apiKey}
+                      onChange={(e) => saveApiConfig({ ...apiConfig, apiKey: e.target.value })}
+                      placeholder={
+                        apiConfig.provider === 'anthropic' ? 'sk-ant-...' : 
+                        apiConfig.provider === 'openai' ? 'sk-...' : 'AIzaSy...'
+                      }
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder-slate-700 font-mono text-[11px]"
+                    />
+                    <Key className="w-3 h-3 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  </div>
+                </div>
+
+                {/* Custom API Base URL Endpoint */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] text-slate-400 font-mono">3. 自定义代理端点 (Base URL / Host):</label>
+                    <span className="text-[9px] text-slate-500">非必填</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={apiConfig.baseUrl}
+                    onChange={(e) => saveApiConfig({ ...apiConfig, baseUrl: e.target.value })}
+                    placeholder={
+                      apiConfig.provider === 'anthropic' ? 'https://api.anthropic.com/v1 (支持中转中继站)' :
+                      apiConfig.provider === 'openai' ? 'https://api.openai.com/v1' :
+                      'https://generativelanguage.googleapis.com/v1beta/models'
+                    }
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder-slate-700 font-mono text-[11px]"
+                  />
+                </div>
+
+                {/* Custom Model Name Selection */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] text-slate-400 font-mono">4. 指定模型名称 (Model ID):</label>
+                  </div>
+                  <input
+                    type="text"
+                    value={apiConfig.model}
+                    onChange={(e) => saveApiConfig({ ...apiConfig, model: e.target.value })}
+                    placeholder={
+                      apiConfig.provider === 'anthropic' ? 'claude-3-5-sonnet-20241022' :
+                      apiConfig.provider === 'openai' ? 'gpt-4o-mini' : 'gemini-1.5-flash'
+                    }
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder-slate-700 font-mono text-[11px]"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Core Control Center Box */}
           <div className="bg-slate-950/60 border border-slate-800 p-5 rounded-xl shadow-2xl space-y-4">
@@ -679,11 +894,11 @@ export default function App() {
                       </h2>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-2.5">
+                    <div className="grid grid-cols-1 gap-2.5 group/bullets">
                       {currentSlide.bullets?.map((bullet, index) => (
                         <div 
                           key={index} 
-                          className={`p-3 rounded-lg flex items-start space-x-3 transition-transform hover:translate-x-1 ${currentTheme.cardBg}`}
+                          className={`p-3 rounded-lg flex items-start space-x-3 transition-all duration-300 ease-out origin-center ${currentTheme.cardBg} group-hover/bullets:blur-[1.5px] group-hover/bullets:opacity-40 group-hover/bullets:scale-95 hover:!scale-[1.10] hover:!blur-none hover:!opacity-100 hover:z-20 hover:ring-2 hover:ring-indigo-400 hover:shadow-xl`}
                         >
                           <div className="bg-indigo-500/10 text-indigo-400 p-1 rounded mt-0.5 font-mono text-[10px] font-bold">
                             0{index + 1}
@@ -710,10 +925,10 @@ export default function App() {
                     </div>
 
                     {currentSlide.comparison ? (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 group/compare">
                         
                         {/* Item A Card with active pulse animation */}
-                        <div className={`p-4 rounded-xl relative overflow-hidden transition-all duration-300 hover:scale-[1.02] ${currentTheme.cardBg}`}>
+                        <div className={`p-4 rounded-xl relative overflow-hidden transition-all duration-300 ease-out origin-center ${currentTheme.cardBg} group-hover/compare:blur-[2px] group-hover/compare:opacity-40 group-hover/compare:scale-95 hover:!scale-105 hover:!blur-none hover:!opacity-100 hover:z-20 hover:ring-2 hover:ring-indigo-500 hover:shadow-[0_0_20px_rgba(99,102,241,0.5)]`}>
                           {/* Pulsing visual element simulating animated charts */}
                           <div className="absolute top-2 right-2 flex items-center space-x-1">
                             <span className="w-2 h-2 rounded-full bg-indigo-500 animate-ping"></span>
@@ -748,7 +963,7 @@ export default function App() {
                         </div>
 
                         {/* Item B Card with active pulse animation */}
-                        <div className={`p-4 rounded-xl relative overflow-hidden transition-all duration-300 hover:scale-[1.02] ${currentTheme.cardBg}`}>
+                        <div className={`p-4 rounded-xl relative overflow-hidden transition-all duration-300 ease-out origin-center ${currentTheme.cardBg} group-hover/compare:blur-[2px] group-hover/compare:opacity-40 group-hover/compare:scale-95 hover:!scale-105 hover:!blur-none hover:!opacity-100 hover:z-20 hover:ring-2 hover:ring-emerald-500 hover:shadow-[0_0_20px_rgba(16,185,129,0.5)]`}>
                           <div className="absolute top-2 right-2 flex items-center space-x-1">
                             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
                             <span className="text-[9px] opacity-40">ITEM B</span>
@@ -802,11 +1017,11 @@ export default function App() {
                       </h2>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 group/stats">
                       {currentSlide.stats?.map((stat, idx) => (
                         <div 
                           key={idx} 
-                          className={`p-3 rounded-lg relative overflow-hidden transition-all hover:-translate-y-0.5 ${currentTheme.cardBg}`}
+                          className={`p-3 rounded-lg relative overflow-hidden transition-all duration-300 ease-out origin-center ${currentTheme.cardBg} group-hover/stats:blur-[2px] group-hover/stats:opacity-40 group-hover/stats:scale-95 hover:!scale-110 hover:!blur-none hover:!opacity-100 hover:z-20 hover:ring-2 hover:ring-rose-500 hover:shadow-[0_0_15px_rgba(244,63,94,0.5)]`}
                         >
                           <span className="text-[10px] text-slate-400 block truncate">
                             {stat.label}
@@ -856,18 +1071,18 @@ export default function App() {
                     </div>
 
                     {currentSlide.steps && currentSlide.steps.length > 0 ? (
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 relative">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 relative group/steps">
                         {/* Connecting visual beam (desktop only) */}
                         <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-indigo-500/20 -translate-y-6 hidden md:block z-0" />
 
                         {currentSlide.steps.map((step, idx) => (
                           <div 
                             key={idx} 
-                            className={`p-3.5 rounded-lg relative z-10 transition-all ${
+                            className={`p-3.5 rounded-lg relative z-10 transition-all duration-300 ease-out origin-center ${
                               step.highlight 
                                 ? 'bg-indigo-950/40 border-2 border-indigo-500/60 ring-2 ring-indigo-500/10' 
                                 : `${currentTheme.cardBg}`
-                            }`}
+                            } group-hover/steps:blur-[2px] group-hover/steps:opacity-40 group-hover/steps:scale-95 hover:!scale-110 hover:!blur-none hover:!opacity-100 hover:!z-20 hover:ring-2 hover:ring-indigo-400 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)]`}
                           >
                             <div className="flex items-center justify-between mb-2">
                               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-black/40 font-bold text-indigo-400">
@@ -994,7 +1209,7 @@ export default function App() {
             </div>
 
             {/* Small carousel items list */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 py-4 group/carousel">
               {slidesList.map((slide, sIdx) => {
                 const isSelected = sIdx === activeSlideIndex;
                 const slideTheme = getTheme(pptData.themeId);
@@ -1002,13 +1217,13 @@ export default function App() {
                   <button
                     key={slide.id}
                     onClick={() => setActiveSlideIndex(sIdx)}
-                    className={`aspect-[16/10] rounded-lg p-2.5 flex flex-col justify-between text-left transition-all duration-300 ${
+                    className={`aspect-[16/10] rounded-lg p-2.5 flex flex-col justify-between text-left transition-all duration-300 ease-out origin-center ${
                       slideTheme.bgClass
                     } ${slideTheme.textClass} ${
                       isSelected 
-                        ? 'ring-4 ring-indigo-500 ring-offset-2 ring-offset-slate-900 scale-95 font-bold shadow-lg' 
-                        : 'opacity-70 hover:opacity-100 scale-100 border border-slate-800'
-                    }`}
+                        ? 'ring-4 ring-indigo-500 ring-offset-2 ring-offset-slate-900 font-bold shadow-lg' 
+                        : 'border border-slate-800 opacity-80'
+                    } group-hover/carousel:blur-[3px] group-hover/carousel:opacity-30 group-hover/carousel:scale-90 hover:!scale-150 hover:!blur-none hover:!opacity-100 hover:z-30 hover:ring-4 hover:ring-cyan-500 hover:ring-offset-2 hover:ring-offset-slate-900 hover:shadow-[0_0_25px_rgba(6,182,212,0.8)]`}
                   >
                     <div className="text-[8px] truncate leading-none mb-1 opacity-75">
                       {slide.title}
@@ -1066,7 +1281,7 @@ export default function App() {
       {isPreviewing && (
         <div className="fixed inset-0 bg-slate-950 z-50 flex flex-col justify-between p-6 animate-fade-in text-white select-none">
           {/* Top Panel */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between col-span-full">
             <div className="flex items-center space-x-3">
               <span className="text-xs bg-red-600 text-white font-extrabold px-2.5 py-1 rounded animate-pulse">
                 ● 正在放映
@@ -1076,13 +1291,23 @@ export default function App() {
               </p>
             </div>
             
-            <button
-              onClick={() => setIsPreviewing(false)}
-              className="flex items-center space-x-1 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 rounded-lg text-xs"
-            >
-              <X className="w-4 h-4" />
-              <span>退出放映 (Esc)</span>
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={toggleBrowserFullscreen}
+                className="flex items-center space-x-1 px-3 py-1.5 bg-slate-850 hover:bg-slate-750 text-slate-200 border border-slate-700 rounded-lg text-xs font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]"
+              >
+                {isFullscreen ? <Minimize2 className="w-3.5 h-3.5 text-indigo-400 animate-pulse" /> : <Maximize2 className="w-3.5 h-3.5 text-indigo-400" />}
+                <span>{isFullscreen ? "退出全屏" : "全屏游览"}</span>
+              </button>
+
+              <button
+                onClick={() => setIsPreviewing(false)}
+                className="flex items-center space-x-1 px-3 py-1.5 bg-rose-950/60 hover:bg-rose-900/80 text-rose-200 border border-rose-800/45 rounded-lg text-xs font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <X className="w-4 h-4 text-rose-400" />
+                <span>退出放映 (Esc)</span>
+              </button>
+            </div>
           </div>
 
           {/* Central Slide Component Canvas */}
@@ -1178,11 +1403,11 @@ export default function App() {
                         {currentSlide.title}
                       </h2>
                     </div>
-                    <div className="grid grid-cols-1 gap-3.5">
+                    <div className="grid grid-cols-1 gap-3.5 group/previewbullets">
                       {currentSlide.bullets?.map((bullet, index) => (
                         <div 
                           key={index} 
-                          className={`p-4 rounded-xl flex items-start space-x-4 ${currentTheme.cardBg}`}
+                          className={`p-4 rounded-xl flex items-start space-x-4 transition-all duration-300 ease-out origin-center ${currentTheme.cardBg} group-hover/previewbullets:blur-[1.5px] group-hover/previewbullets:opacity-40 group-hover/previewbullets:scale-95 hover:!scale-[1.08] hover:!blur-none hover:!opacity-100 hover:z-20 hover:ring-2 hover:ring-indigo-400 hover:shadow-xl`}
                         >
                           <div className="bg-indigo-500/10 text-indigo-400 p-1.5 rounded mt-0.5 font-mono text-xs font-bold">
                             0{index + 1}
@@ -1209,8 +1434,8 @@ export default function App() {
                     </div>
 
                     {currentSlide.comparison && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className={`p-5 rounded-2xl relative overflow-hidden ${currentTheme.cardBg}`}>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 group/previewcompare">
+                        <div className={`p-5 rounded-2xl relative overflow-hidden transition-all duration-300 ease-out origin-center ${currentTheme.cardBg} group-hover/previewcompare:blur-[2px] group-hover/previewcompare:opacity-40 group-hover/previewcompare:scale-95 hover:!scale-105 hover:!blur-none hover:!opacity-100 hover:z-20 hover:ring-2 hover:ring-indigo-500 hover:shadow-[0_0_20px_rgba(99,102,241,0.5)]`}>
                           <div className="absolute top-3 right-3 flex items-center space-x-1.5">
                             <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-ping"></span>
                           </div>
@@ -1229,7 +1454,7 @@ export default function App() {
                           <p className="text-xs opacity-75 mt-3 leading-relaxed">{currentSlide.comparison.itemA.description}</p>
                         </div>
 
-                        <div className={`p-5 rounded-2xl relative overflow-hidden ${currentTheme.cardBg}`}>
+                        <div className={`p-5 rounded-2xl relative overflow-hidden transition-all duration-300 ease-out origin-center ${currentTheme.cardBg} group-hover/previewcompare:blur-[2px] group-hover/previewcompare:opacity-40 group-hover/previewcompare:scale-95 hover:!scale-105 hover:!blur-none hover:!opacity-100 hover:z-20 hover:ring-2 hover:ring-emerald-500 hover:shadow-[0_0_20px_rgba(16,185,129,0.5)]`}>
                           <div className="absolute top-3 right-3 flex items-center space-x-1.5">
                             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"></span>
                           </div>
@@ -1264,9 +1489,9 @@ export default function App() {
                       </h2>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 group/previewstats">
                       {currentSlide.stats?.map((stat, idx) => (
-                        <div key={idx} className={`p-4 rounded-xl ${currentTheme.cardBg} space-y-3`}>
+                        <div key={idx} className={`p-4 rounded-xl transition-all duration-300 ease-out origin-center ${currentTheme.cardBg} group-hover/previewstats:blur-[2px] group-hover/previewstats:opacity-40 group-hover/previewstats:scale-95 hover:!scale-110 hover:!blur-none hover:!opacity-100 hover:z-20 hover:ring-2 hover:ring-rose-500 hover:shadow-[0_0_15px_rgba(244,63,94,0.5)] space-y-3`}>
                           <span className="text-xs text-slate-400 block truncate">{stat.label}</span>
                           <div className="flex items-baseline justify-between">
                             <span className="text-3xl font-black text-rose-400">{stat.value}</span>
@@ -1292,13 +1517,13 @@ export default function App() {
                       <span className="text-xs uppercase font-mono tracking-wider opacity-60">工作流与发展线</span>
                       <h2 className={`${currentTheme.headingFont} text-2xl`}>{currentSlide.title}</h2>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 group/previewsteps">
                       {currentSlide.steps?.map((step, idx) => (
                         <div 
                           key={idx} 
-                          className={`p-5 rounded-xl ${
+                          className={`p-5 rounded-xl transition-all duration-300 ease-out origin-center ${
                             step.highlight ? 'bg-indigo-950/50 border-2 border-indigo-500' : `${currentTheme.cardBg}`
-                          }`}
+                          } group-hover/previewsteps:blur-[2px] group-hover/previewsteps:opacity-40 group-hover/previewsteps:scale-95 hover:!scale-110 hover:!blur-none hover:!opacity-100 hover:!z-20 hover:ring-2 hover:ring-indigo-400 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)]`}
                         >
                           <span className="text-xs font-mono text-indigo-400 block mb-2">{step.duration || `阶段 ${idx+1}`}</span>
                           <h4 className="text-sm font-semibold">{step.title}</h4>

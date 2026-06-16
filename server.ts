@@ -35,26 +35,134 @@ function getGeminiClient() {
   });
 }
 
+// Helper function to call custom API models (Claude, OpenAI or Gemini) safely
+async function generateWithCustomProvider(prompt: string, apiConfig: any): Promise<string> {
+  const { provider, apiKey, baseUrl, model } = apiConfig;
+
+  if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
+    throw new Error("请输入自定义 API Key");
+  }
+
+  const cleanApiKey = apiKey.trim();
+
+  // 1. Customized Gemini Provider
+  if (provider === "gemini") {
+    // If standard Gemini URL, use built-in format
+    const isStandardUrl = !baseUrl || baseUrl.trim() === "" || baseUrl.includes("generativelanguage.googleapis.com");
+    const resolvedUrl = isStandardUrl ? "https://generativelanguage.googleapis.com/v1beta/models" : baseUrl.trim();
+    const resolvedModel = model || "gemini-1.5-flash";
+    const url = `${resolvedUrl}/${resolvedModel}:generateContent?key=${cleanApiKey}`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json"
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Gemini 自定义接口调用失败: ${response.status} (${errText})`);
+    }
+
+    const data: any = await response.json();
+    const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!candidateText) {
+      throw new Error("Gemini 自定义接口返回了空数据");
+    }
+    return candidateText;
+  } 
+  
+  // 2. Claude (Anthropic) Provider
+  if (provider === "anthropic") {
+    const isStandardUrl = !baseUrl || baseUrl.trim() === "" || baseUrl.includes("api.anthropic.com");
+    const url = isStandardUrl ? "https://api.anthropic.com/v1/messages" : `${baseUrl.trim()}/messages`;
+    const targetModel = model || "claude-3-5-sonnet-20241022";
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "x-api-key": cleanApiKey,
+      "anthropic-version": "2023-06-01",
+      "Authorization": `Bearer ${cleanApiKey}` // some third-party Claude brokers use standard Bearer
+    };
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: targetModel,
+        max_tokens: 4000,
+        messages: [{ role: "user", content: prompt }]
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Claude (Anthropic) 接口调用失败: ${response.status} (${errText})`);
+    }
+
+    const data: any = await response.json();
+    const contentText = data.content?.[0]?.text;
+    if (!contentText) {
+      throw new Error("Claude 接口未返回文本内容");
+    }
+    return contentText;
+  }
+
+  // 3. OpenAI / Custom API Key / OpenAI compatibility endpoint
+  if (provider === "openai" || provider === "custom") {
+    const resolvedUrl = baseUrl && baseUrl.trim() !== "" ? baseUrl.trim() : "https://api.openai.com/v1";
+    // Ensure URL has /chat/completions suffix if not matching
+    const url = resolvedUrl.endsWith("/chat/completions") ? resolvedUrl : `${resolvedUrl}/chat/completions`;
+    const targetModel = model || "gpt-4o-mini";
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${cleanApiKey}`
+      },
+      body: JSON.stringify({
+        model: targetModel,
+        messages: [
+          { role: "system", content: "You are an expert presentation layout planner. Generate PPT in the strict requested JSON format. Do not write markdown tags." },
+          { role: "user", content: prompt }
+        ],
+        response_format: { type: "json_object" }
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`OpenAI 接口调用失败: ${response.status} (${errText})`);
+    }
+
+    const data: any = await response.json();
+    const contentText = data.choices?.[0]?.message?.content;
+    if (!contentText) {
+      throw new Error("OpenAI / 兼容接口未返回文本内容");
+    }
+    return contentText;
+  }
+
+  throw new Error(`未知或暂不支持的 API 提供商: ${provider}`);
+}
+
 // REST Endpoint to process user copy/article text and map to dynamic slides using Gemini
 app.post("/api/generate-ppt", async (req: Request, res: Response): Promise<void> => {
-  const { text, styleOverride } = req.body;
+  const { text, styleOverride, apiConfig } = req.body;
 
   if (!text || typeof text !== "string") {
     res.status(400).json({ error: "请提供文案内容 (text is required)." });
     return;
   }
 
-  const ai = getGeminiClient();
-  if (!ai) {
-    res.status(400).json({
-      error: "API_KEY_REQUIRED",
-      message: "未检测到有效的 GEMINI_API_KEY。请在系统的「Secrets/密码管理」中配置 API Key，或直接体验内置高保真模版。"
-    });
-    return;
-  }
-
-  try {
-    const prompt = `
+  // Ensure prompt includes the requirements for slides structure
+  const prompt = `
 你是一位顶级的 PPT 演示设计与文案提炼大师。
 你要完全读懂用户提供的文章/文案，并且将其进行逻辑分段；
 因为用户需要保证内容的完整性（"保证内容的完整性"），你必须把【每一段/章节/大意】提炼并生成【多个】PPT幻灯片，不要随便忽略或压缩信息，信息需要连贯、饱满。
@@ -72,7 +180,7 @@ app.post("/api/generate-ppt", async (req: Request, res: Response): Promise<void>
 2. 丰富的动图与数据图表：为了想粉丝直观地展示（"数据对比，数据分析"），在分配幻灯片布局时，必须重点、慷慨地使用带有对比、分析属性的布局：
    - 如果文中提到两个产品、两组指标、两个时期、前/后、赞成/反对等，必须生成 layout 为 'comparison' 的幻灯片，设计精密的数值对比 itemA 和 itemB。
    - 如果文中包含大量统计项，或者有核心业绩指标（KPI）、几组独立的重要数字，必须生成 layout 为 'stats-grid' 的幻灯片，并填充多项丰富的数据。
-   - 如果文中讲解时间线、发展路线、先后顺序、工艺步骤，必须生成 layout 为 'timeline' 或 'process-flow'。
+   - If user asks for timeline or process sequence, make slides of layout 'timeline' or 'process-flow'.
    - 对于普通的观点提炼，使用 'bullets' 布局，并挑选高亮词汇列表 ('boldWords')，或者使用 'split-text' 布局分栏。
 
 3. 保证完整性：请生成共计大约 6 到 12 张幻灯片。不要在一张幻灯片中塞入太多文字。要对文案进行精巧的分句分屏设计，使得每一页都像海报一样精美，文字要极其凝练、适合PPT阅读。
@@ -127,37 +235,72 @@ ${JSON.stringify({
 ${styleOverride ? `用户偏好的风格选择: ${styleOverride}` : ""}
 `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
+  let textOutput = "";
 
-    const textOutput = response.text || "{}";
-    const cleanedText = textOutput.trim();
+  // Check if standard key vs custom config is requested
+  if (apiConfig && apiConfig.enabled && apiConfig.apiKey) {
+    try {
+      textOutput = await generateWithCustomProvider(prompt, apiConfig);
+    } catch (err: any) {
+      console.error("Custom provider execution failed:", err);
+      res.status(400).json({
+        error: "CUSTOM_PROVIDER_ERROR",
+        message: `您配置的自定义渠道 (${apiConfig.provider}) 调用失败:\n${err.message}`
+      });
+      return;
+    }
+  } else {
+    // Falls back to standard system Gemini client
+    const ai = getGeminiClient();
+    if (!ai) {
+      res.status(400).json({
+        error: "API_KEY_REQUIRED",
+        message: "未检测到有效的系统 GEMINI_API_KEY。请在下方配置块中填入您的「Claude / OpenAI / Gemini」等自定义 API Key，或直接体验内置高保真模版。"
+      });
+      return;
+    }
 
     try {
-      const parsedData = JSON.parse(cleanedText);
-      res.json(parsedData);
-    } catch (parseError) {
-      console.error("Gemini output parse failed. Raw response:", cleanedText);
-      // Attempt manual extraction in case it was wrapped in a markdown block
-      const jsonMatch = cleanedText.match(/```json\s*([\s\S]*?)\s*```/) || cleanedText.match(/```\s*([\s\S]*?)\s*```/);
-      if (jsonMatch && jsonMatch[1]) {
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+        },
+      });
+      textOutput = response.text || "{}";
+    } catch (error: any) {
+      console.error("Gemini system API call failed:", error);
+      res.status(500).json({
+        error: "GENERATION_FAILED",
+        message: "生成 PPT 时发生异常，可能由于系统密钥限制或网络问题。您可以在下方填入您的自定义 Claude 等 key 连接重试！"
+      });
+      return;
+    }
+  }
+
+  const cleanedText = textOutput.trim();
+
+  try {
+    const parsedData = JSON.parse(cleanedText);
+    res.json(parsedData);
+  } catch (parseError) {
+    console.error("Custom output parse failed. Raw response:", cleanedText);
+    // Attempt manual extraction in case it was wrapped in a markdown block
+    const jsonMatch = cleanedText.match(/```json\s*([\s\S]*?)\s*```/) || cleanedText.match(/```\s*([\s\S]*?)\s*```/);
+    if (jsonMatch && jsonMatch[1]) {
+      try {
         const fallbackParsed = JSON.parse(jsonMatch[1].trim());
         res.json(fallbackParsed);
-      } else {
-        throw parseError;
+        return;
+      } catch (e) {
+        // ignore
       }
     }
-  } catch (error: any) {
-    console.error("Gemini API call failed:", error);
     res.status(500).json({
-      error: "GENERATION_FAILED",
-      message: "生成 PPT 时发生异常，可能由于网络异常或内容安全过滤。您可以重试或选择内置示例体验。",
-      details: error.message
+      error: "PARSE_FAILED",
+      message: "API 成功返回但格式解析失败，请尝试重新生成或微调文案。",
+      details: cleanedText.substring(0, 500)
     });
   }
 });
