@@ -1,0 +1,6 @@
+{
+  "name": "文案生成 PPT 智能软件",
+  "description": "通过文案分段，智能读懂内容并生成风格契合、配有动态数据对比/分析图表的 PPT 幻灯片展示软件。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
